@@ -37,7 +37,6 @@ $ hexdump -C sces_012.37
  */
 
 #include <iostream>
-#include <fstream>
 #include <fcntl.h>
 #include <vector>
 #include "hexdump.h"
@@ -48,9 +47,9 @@ $ hexdump -C sces_012.37
 
 /*
   ===========================================================================
-  
-  COMMON TYPE  
-  
+
+  COMMON TYPE
+
   ===========================================================================
 */
 
@@ -61,7 +60,7 @@ typedef int s32;
 typedef unsigned int u32;
 typedef short s16;
 typedef unsigned short u16;
-typedef char s8;
+typedef signed char s8;
 typedef unsigned char u8;
 typedef float f32;
 typedef double f64;
@@ -77,9 +76,9 @@ std::ostream* outstream;
 
 /*
   ===========================================================================
-  
-  FILE UTIL  
-  
+
+  FILE UTIL
+
   ===========================================================================
 */
 
@@ -101,9 +100,9 @@ namespace FileUtil
 
 /*
   ===========================================================================
-  
-  PS1 EXE FORMAT  
-  
+
+  PS1 EXE FORMAT
+
   ===========================================================================
 */
 
@@ -136,7 +135,7 @@ struct PS1Header {
 		os << "t_size : " << h.t_size << "\n";
 		os << "s_addr : 0x" << std::hex << h.s_addr << std::dec << "\n";
 		os << "s_size : " << h.s_size << "\n";
-		os << "marker : " << h.marker << "\n";		
+		os << "marker : " << h.marker << "\n";
 		os << "pc0_offset : 0x" << std::hex << h.pc0_offset() << std::dec;
 		return os;
 	}
@@ -144,7 +143,7 @@ struct PS1Header {
 
 struct PS1File
 {
-	std::string filename;	
+	std::string filename;
 	unsigned int data_sz;
 	union {
 		const unsigned char* data;
@@ -156,23 +155,32 @@ struct PS1File
 	~PS1File() {
 		delete[] data;
 	}
-	const unsigned char* text_section() const { return data + 0x800; }	
+	const unsigned char* text_section() const { return data + 0x800; }
 };
 
 namespace R3000AInstruction
 {
-	const std::string registers[] = { "$zr", "$at", "$v0", "$v1", "$a0", "$a1", "$a2", "$a3", "$t0", "$t1", "$t2", "$t3", "$t4", "$t5", "$t6", "$t7", "$s0", "$s1", "$s2", "$s3", "$s4", "$s5", "$s6", "$s7", "$t8", "$t9", "$k0", "$k1", "$gp", "$sp", "$fp", "$ra" };		
+	const std::string registers[] = { "zr", "at", "v0", "v1", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "t8", "t9", "k0", "k1", "gp", "sp", "fp", "ra" };
 	static unsigned int shift_mask(unsigned int data, int shift, int len_bit) {
 		return (data >> shift) & ((1<<len_bit)-1);
 	}
 
-	static std::string hex2str(u64 v, int l) 
+	static std::string hex2str(u64 v, int l)
 	{
-		std::stringstream ss; 
-		ss << "0x" << std::hex << std::setfill('0') << std::setw(l) << v << std::dec; 
+		std::stringstream ss;
+		ss << "0x" << std::hex << std::setfill('0') << std::setw(l) << v << std::dec;
 		return ss.str();
 	}
-	
+
+	static void inst2upper(std::string& s)
+	{
+		for (auto& c : s) {
+			if (c >= 'a' && c <= 'z')
+				c = c - 32;
+			else break;
+		}
+	}
+
 	struct Generic {
 		unsigned int op : 6;
 		unsigned int other: 26;
@@ -180,19 +188,21 @@ namespace R3000AInstruction
 		Generic(unsigned int data, u64 pc) : op(shift_mask(data, 26, 6)), other(shift_mask(data, 0, 26)), pc(pc) {}
 		virtual std::string name() const { std::stringstream ss; ss << "UNKNOWN_INSTRUCTION --- " << std::hex << "op:" << op << " other:" << other << std::dec; return ss.str(); }
 		virtual std::ostream& str(std::ostream& os) const { return os; }
-		friend std::ostream& operator<<(std::ostream& os, const Generic& inst) 
+		friend std::ostream& operator<<(std::ostream& os, const Generic& inst)
 		{
-			os << hex2str(inst.pc, 8) << " " << inst.name() << " ";
+			std::string inst_name = inst.name();
+			inst2upper(inst_name);
+			os << hex2str(inst.pc, 8) << " " << inst_name << " ";
 			inst.str(os);
 			return os;
 		}
 	};
-	
+
 	struct JType : public Generic {
 		int target() const { return shift_mask(other, 0, 26); }
 		JType(const Generic& g) : Generic(g) {}
 		std::string address() const { return hex2str((target() << 2) | (pc & 0xF0000000), 8); }
-		std::ostream& str(std::ostream& os) const { return os << address(); }		
+		std::ostream& str(std::ostream& os) const { return os << address(); }
 	};
 
 	struct RType : public Generic {
@@ -207,7 +217,7 @@ namespace R3000AInstruction
 
 	struct BranchEqualFmt : public RType {
 		BranchEqualFmt(const Generic& g) : RType(g) {}
-		std::ostream& str(std::ostream& os) const { return os << rs() << ", " << rt() << ", " << imm(); }						
+		std::ostream& str(std::ostream& os) const { return os << rs() << ", " << rt() << ", " << imm(); }
 	};
 	struct BranchZeroFmt : public RType {
 		BranchZeroFmt(const Generic& g) : RType(g) {}
@@ -216,7 +226,7 @@ namespace R3000AInstruction
 
 	struct LoadStoreInstruction : public RType {
 		LoadStoreInstruction(const Generic& g) : RType(g) {}
-		std::ostream& str(std::ostream& os) const { return os << rt() << ", " << imm() << "(" << rs() << ")"; }		
+		std::ostream& str(std::ostream& os) const { return os << rt() << ", " << imm() << "(" << rs() << ")"; }
 	};
 	struct ImmediateALU : public RType {
 		ImmediateALU(const Generic& g) : RType(g) {}
@@ -226,7 +236,7 @@ namespace R3000AInstruction
 		ImmediateLUI(const Generic& g) : RType(g) {}
 		std::ostream& str(std::ostream& os) const { return os << rt() << ", " << imm(); };
 	};
-	struct CoprocessorHeader : public JType {		
+	struct CoprocessorHeader : public JType {
 		CoprocessorHeader(const Generic& g) : JType(g) {}
 		int cp() const { return shift_mask(op, 0, 2); }
 		int coflag() const { return shift_mask(target(), 25, 1); }
@@ -239,7 +249,7 @@ namespace R3000AInstruction
 	struct CoprocessorMove : public CoprocessorHeader {
 		CoprocessorMove(const Generic& g) : CoprocessorHeader(g) {}
 		int mvfunc() const { return shift_mask(target(), 21, 5); }
-		int rt_i() const { return shift_mask(other, 16, 5); }		
+		int rt_i() const { return shift_mask(other, 16, 5); }
 		int rd_i() const { return shift_mask(other, 11, 5); }
 		std::string rt() const { return registers[rt_i()]; }
 		std::string rd() const { return registers[rd_i()]; }
@@ -262,36 +272,36 @@ namespace R3000AInstruction
 	struct ShiftAmount : public Special
 	{
 		ShiftAmount(const Generic& g) : Special(g) {}
-		int rt_i() const { return shift_mask(other, 16, 5); }		
+		int rt_i() const { return shift_mask(other, 16, 5); }
 		int rd_i() const { return shift_mask(other, 11, 5); }
 		std::string rt() const { return registers[rt_i()]; }
 		std::string rd() const { return registers[rd_i()]; }
 		int sa_i() const { return shift_mask(other, 6, 5); }
 		std::string sa() const { return hex2str(sa_i(), 2); }
-		std::ostream& str(std::ostream& os) const { return os << rd() << ", " << rt() << ", " << sa(); }		
+		std::ostream& str(std::ostream& os) const { return os << rd() << ", " << rt() << ", " << sa(); }
 	};
 	struct ShiftRegister : public Special
 	{
 		ShiftRegister(const Generic& g) : Special(g) {}
-		int rs_i() const { return shift_mask(other, 21, 5); }		
-		int rt_i() const { return shift_mask(other, 16, 5); }		
+		int rs_i() const { return shift_mask(other, 21, 5); }
+		int rt_i() const { return shift_mask(other, 16, 5); }
 		int rd_i() const { return shift_mask(other, 11, 5); }
 		std::string rs() const { return registers[rs_i()]; }
 		std::string rt() const { return registers[rt_i()]; }
 		std::string rd() const { return registers[rd_i()]; }
-		std::ostream& str(std::ostream& os) const { return os << rd() << ", " << rt() << ", " << rs(); }		
+		std::ostream& str(std::ostream& os) const { return os << rd() << ", " << rt() << ", " << rs(); }
 	};
 	struct JumpTarget : public Special
 	{
 		JumpTarget(const Generic& g) : Special(g) {}
-		int rs_i() const { return shift_mask(other, 21, 5); }		
+		int rs_i() const { return shift_mask(other, 21, 5); }
 		std::string rs() const { return registers[rs_i()]; }
-		std::ostream& str(std::ostream& os) const { return os << rs(); }		
+		std::ostream& str(std::ostream& os) const { return os << rs(); }
 	};
 	struct JumpRegister : public Special
 	{
 		JumpRegister(const Generic& g) : Special(g) {}
-		int rs_i() const { return shift_mask(other, 21, 5); }		
+		int rs_i() const { return shift_mask(other, 21, 5); }
 		int rd_i() const { return shift_mask(other, 11, 5); }
 		std::string rs() const { return registers[rs_i()]; }
 		std::string rd() const { return registers[rd_i()]; }
@@ -342,18 +352,18 @@ namespace R3000AInstruction
 		std::ostream& str(std::ostream& os) const { return os << rs() << ", " << offset(); }
 	};
 
-#define DEFINE_INSTRUCTION(INST, TYPE, OP, OPNAME)		     \
-	struct INST : public TYPE {				     \
-		static const int OPNAME = OP;			     \
-		INST(const Generic& g) : TYPE(g) {}		     \
-		std::string name() const { return #INST; }	     \
+#define DEFINE_INSTRUCTION(INST, TYPE, OP, OPNAME) \
+	struct INST : public TYPE {                    \
+		static const int OPNAME = OP;              \
+		INST(const Generic& g) : TYPE(g) {}        \
+		std::string name() const { return #INST; } \
 	};
 #define OPCODE(INST, TYPE, OP) DEFINE_INSTRUCTION(INST, TYPE, OP, opcode)
-#define SPECIAL(INST, TYPE, SID)				     \
-	struct CONCAT(S,INST) : public TYPE {			     \
-		static const int sid = SID;			     \
-		CONCAT(S,INST)(const Generic& g) : TYPE(g) {}	     \
-		std::string name() const { return #INST; }	     \
+#define SPECIAL(INST, TYPE, SID)                      \
+	struct CONCAT(S,INST) : public TYPE {             \
+		static const int sid = SID;                   \
+		CONCAT(S,INST)(const Generic& g) : TYPE(g) {} \
+		std::string name() const { return #INST; }    \
 	};
 #define BCOND(INST, TYPE, BID) DEFINE_INSTRUCTION(INST, TYPE, BID, bid)
 #define COP0(INST, TYPE, CO) DEFINE_INSTRUCTION(INST, TYPE, CO, co)
@@ -361,7 +371,7 @@ namespace R3000AInstruction
 #define COP2(INST, TYPE, CO) DEFINE_INSTRUCTION(INST, TYPE, CO, co)
 #define COP3(INST, TYPE, CO) DEFINE_INSTRUCTION(INST, TYPE, CO, co)
 #define CM0(INST, TYPE, MVFUNC) DEFINE_INSTRUCTION(INST, TYPE, MVFUNC, mvfunc)
-#define CM1(INST, TYPE, MVFUNC)	DEFINE_INSTRUCTION(INST, TYPE, MVFUNC, mvfunc)
+#define CM1(INST, TYPE, MVFUNC) DEFINE_INSTRUCTION(INST, TYPE, MVFUNC, mvfunc)
 #define CM2(INST, TYPE, MVFUNC) DEFINE_INSTRUCTION(INST, TYPE, MVFUNC, mvfunc)
 #define CM3(INST, TYPE, MVFUNC) DEFINE_INSTRUCTION(INST, TYPE, MVFUNC, mvfunc)
 #define COP0TLB(INST, TYPE, TLBFUNC) DEFINE_INSTRUCTION(INST, TYPE, TLBFUNC, tlbfunc)
@@ -412,7 +422,7 @@ namespace PS1Disassemble
 	std::map<int, void(*)(const R3000AInstruction::Generic&)> process_map = {
 #define OPCODE(INST, TYPE, OP) DEFINE_MAP_ENTRY(INST, Generic, TYPE, OP)
 #include "r3000a.h"
-#undef OPCODE	
+#undef OPCODE
 	};
 
 	std::map<int, void(*)(const R3000AInstruction::ch0&)> process_ch0_map = {
@@ -464,11 +474,11 @@ namespace PS1Disassemble
 #include "r3000a.h"
 #undef COP0TLB
 	};
-		template <> void process(const R3000AInstruction::ch0& c) { 
+		template <> void process(const R3000AInstruction::ch0& c) {
 			const R3000AInstruction::CoprocessorOperation co((c));
-			if ( c.coflag() == 1 && process_c0tlb_map.find(co.cofunc()) != process_c0tlb_map.end() ) { 
+			if ( c.coflag() == 1 && process_c0tlb_map.find(co.cofunc()) != process_c0tlb_map.end() ) {
 				process_c0tlb_map.at(co.cofunc())(co);
-			} else { 
+			} else {
 				process_ch0_map.at(c.coflag())(c);
 			}
 		}
@@ -481,7 +491,7 @@ template <> void process(const R3000AInstruction::cm2& c) { process_cm2_map.at(c
 template <> void process(const R3000AInstruction::ch3& c) { process_ch3_map.at(c.coflag())(c); }
 template <> void process(const R3000AInstruction::cm3& c) { process_cm3_map.at(c.mvfunc())(c); }
 template <> void process(const R3000AInstruction::Generic& g) { process_map.at(g.op)(g); }
-template <> void process(const R3000AInstruction::bcond& b) { process_bcond_map.at(b.bid())(b); }	
+template <> void process(const R3000AInstruction::bcond& b) { process_bcond_map.at(b.bid())(b); }
 template <> void process(const R3000AInstruction::specl& s) { process_specl_map.at(s.sid())(s); }
 
 	class UnalignedPCBeginException {};
@@ -498,7 +508,7 @@ template <> void process(const R3000AInstruction::specl& s) { process_specl_map.
 			}
 		}
 	}
-};	
+};
 
 int main(int argc, char** argv)
 {
@@ -506,13 +516,13 @@ int main(int argc, char** argv)
 		std::cout << "Usage: " << argv[0] << " <PS1_EXE> [OUTPUT FILE]\n";
 		return 1;
 	}
-	
+
 	if ( argc >= 3) {
 		outfile  = std::ofstream(argv[2]);
 		outstream = &outfile;
 	}
 	else outstream = &std::cout;
-	
+
 	int i = 0;
 	std::string ps1_exe = argv[++i]; *outstream << "ps1_exe: " << ps1_exe << "\n";
 	PS1File f(ps1_exe);
@@ -521,6 +531,6 @@ int main(int argc, char** argv)
 
 	u32 pc_start = f.text_section() - f.data;
 	PS1Disassemble::disassemble(f.data, pc_start, f.data_sz);
-		
+
 	return 0;
 }
