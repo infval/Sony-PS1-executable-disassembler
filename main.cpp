@@ -37,7 +37,7 @@ $ hexdump -C sces_012.37
  */
 
 #include <iostream>
-#include <unistd.h>
+#include <fstream>
 #include <fcntl.h>
 #include <vector>
 #include "hexdump.h"
@@ -87,13 +87,14 @@ namespace FileUtil
 {
 	class UnableToOpenFile {};
 	static const unsigned char* read_file(std::string f, unsigned int& sz) {
-		int fd = open(f.c_str(), O_RDONLY);
-		if ( fd < 0 ) throw UnableToOpenFile();
-		sz = lseek(fd, 0, SEEK_END);
-		lseek(fd, 0, SEEK_SET);
+		std::ifstream fd(f, std::ios_base::binary);
+		if (!fd.is_open()) throw UnableToOpenFile();
+		fd.seekg(0, std::ios_base::end);
+		sz = (unsigned)fd.tellg();
+		fd.seekg(0, std::ios_base::beg);
 		unsigned char* data = new unsigned char[sz];
-		read(fd, data, sz);
-		close(fd);
+		fd.read(reinterpret_cast<char*>(data), sz);
+		fd.close();
 		return data;
 	}
 }
@@ -165,7 +166,7 @@ namespace R3000AInstruction
 		return (data >> shift) & ((1<<len_bit)-1);
 	}
 
-	static std::string hex2str(unsigned long v, int l) 
+	static std::string hex2str(u64 v, int l) 
 	{
 		std::stringstream ss; 
 		ss << "0x" << std::hex << std::setfill('0') << std::setw(l) << v << std::dec; 
@@ -188,9 +189,10 @@ namespace R3000AInstruction
 	};
 	
 	struct JType : public Generic {
-		int target() const { return shift_mask(other, 26, 0); }
+		int target() const { return shift_mask(other, 0, 26); }
 		JType(const Generic& g) : Generic(g) {}
-		std::ostream& str(std::ostream& os) const { return os << target(); }		
+		std::string address() const { return hex2str((target() << 2) | (pc & 0xF0000000), 8); }
+		std::ostream& str(std::ostream& os) const { return os << address(); }		
 	};
 
 	struct RType : public Generic {
@@ -220,6 +222,10 @@ namespace R3000AInstruction
 		ImmediateALU(const Generic& g) : RType(g) {}
 		std::ostream& str(std::ostream& os) const { return os << rt() << ", " << rs() << ", " << imm(); };
 	};
+	struct ImmediateLUI : public RType {
+		ImmediateLUI(const Generic& g) : RType(g) {}
+		std::ostream& str(std::ostream& os) const { return os << rt() << ", " << imm(); };
+	};
 	struct CoprocessorHeader : public JType {		
 		CoprocessorHeader(const Generic& g) : JType(g) {}
 		int cp() const { return shift_mask(op, 0, 2); }
@@ -228,11 +234,11 @@ namespace R3000AInstruction
 	struct CoprocessorOperation : public CoprocessorHeader {
 		CoprocessorOperation(const Generic& g) : CoprocessorHeader(g) {}
 		int cofunc() const { return shift_mask(target(), 0, 25); }
-		std::ostream& str(std::ostream& os) const { return os << cofunc(); }
+		std::ostream& str(std::ostream& os) const { return os << hex2str(cofunc(), 7); }
 	};
 	struct CoprocessorMove : public CoprocessorHeader {
 		CoprocessorMove(const Generic& g) : CoprocessorHeader(g) {}
-		int mvfunc() const { return shift_mask(target(), 0, 25); }
+		int mvfunc() const { return shift_mask(target(), 21, 5); }
 		int rt_i() const { return shift_mask(other, 16, 5); }		
 		int rd_i() const { return shift_mask(other, 11, 5); }
 		std::string rt() const { return registers[rt_i()]; }
@@ -240,15 +246,18 @@ namespace R3000AInstruction
 		std::ostream& str(std::ostream& os) const { return os << rt() << ", " << rd(); }
 	};
 	struct Coprocessor0TLB : public CoprocessorOperation {
-		Coprocessor0TLB(Generic& g) : CoprocessorOperation(g) {}
+		Coprocessor0TLB(const Generic& g) : CoprocessorOperation(g) {}
 		int tlbfunc() const { return shift_mask(other, 0, 6); }
-		std::ostream& str(std::ostream& os) const { return os << tlbfunc(); }
+		std::ostream& str(std::ostream& os) const { return os; /* << tlbfunc(); */ }
 	};
 	struct Special : public Generic
 	{
 		static const int opcode = 000;
 		Special(const Generic& g) : Generic(g) {}
 		int sid() const { return shift_mask(other, 0, 6); }
+		int code_i() const { return shift_mask(other, 6, 20); }
+		std::string code() const { return hex2str(code_i(), 5); }
+		std::ostream& str(std::ostream& os) const { return os << code(); }
 	};
 	struct ShiftAmount : public Special
 	{
@@ -257,7 +266,8 @@ namespace R3000AInstruction
 		int rd_i() const { return shift_mask(other, 11, 5); }
 		std::string rt() const { return registers[rt_i()]; }
 		std::string rd() const { return registers[rd_i()]; }
-		int sa() const { return shift_mask(other, 6, 5); }
+		int sa_i() const { return shift_mask(other, 6, 5); }
+		std::string sa() const { return hex2str(sa_i(), 2); }
 		std::ostream& str(std::ostream& os) const { return os << rd() << ", " << rt() << ", " << sa(); }		
 	};
 	struct ShiftRegister : public Special
@@ -287,12 +297,19 @@ namespace R3000AInstruction
 		std::string rd() const { return registers[rd_i()]; }
 		std::ostream& str(std::ostream& os) const { return os << rd() << ", " << rs(); }
 	};
-	struct MoveHILO : public Special
+	struct MoveFromHILO : public Special
 	{
-		MoveHILO(const Generic& g) : Special(g) {}
+		MoveFromHILO(const Generic& g) : Special(g) {}
 		int rd_i() const { return shift_mask(other, 11, 5); }
 		std::string rd() const { return registers[rd_i()]; }
 		std::ostream& str(std::ostream& os) const { return os << rd(); }
+	};
+	struct MoveToHILO : public Special
+	{
+		MoveToHILO(const Generic& g) : Special(g) {}
+		int rs_i() const { return shift_mask(other, 21, 5); }
+		std::string rs() const { return registers[rs_i()]; }
+		std::ostream& str(std::ostream& os) const { return os << rs(); }
 	};
 	struct DivMult : public Special
 	{
@@ -347,7 +364,7 @@ namespace R3000AInstruction
 #define CM1(INST, TYPE, MVFUNC)	DEFINE_INSTRUCTION(INST, TYPE, MVFUNC, mvfunc)
 #define CM2(INST, TYPE, MVFUNC) DEFINE_INSTRUCTION(INST, TYPE, MVFUNC, mvfunc)
 #define CM3(INST, TYPE, MVFUNC) DEFINE_INSTRUCTION(INST, TYPE, MVFUNC, mvfunc)
-#define CP0TL(INST, TYPE, TLBFUNC) DEFINE_INSTRUCTION(INST, TYPE, TLBFUNC, tlbfunc)
+#define COP0TLB(INST, TYPE, TLBFUNC) DEFINE_INSTRUCTION(INST, TYPE, TLBFUNC, tlbfunc)
 #include "r3000a.h"
 #undef OPCODE
 #undef SPECIAL
@@ -360,7 +377,7 @@ namespace R3000AInstruction
 #undef CM1
 #undef CM2
 #undef CM3
-#undef CP0TL
+#undef COP0TLB
 };
 
 namespace PS1Disassemble
