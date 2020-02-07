@@ -177,7 +177,8 @@ namespace R3000AInstruction
 		for (auto& c : s) {
 			if (c >= 'a' && c <= 'z')
 				c = c - 32;
-			else break;
+			else if (c < '0' || c > '9')
+				break;
 		}
 	}
 

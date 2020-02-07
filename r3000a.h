@@ -124,8 +124,6 @@ COP3(cm3 , CoprocessorMove,      0)
 #ifdef CM0
 CM0(mfc0, CoprocessorMove, 000)
 CM0(mtc0, CoprocessorMove, 004)
-CM0(cfc0, CoprocessorMove, 002)
-CM0(ctc0, CoprocessorMove, 006)
 #endif
 
 #ifdef CM1
@@ -150,10 +148,10 @@ CM3(ctc3, CoprocessorMove, 006)
 #endif
 
 #ifdef COP0TLB
-COP0TLB(tlbr, Coprocessor0TLB, 001)
-COP0TLB(tlwi, Coprocessor0TLB, 002)
-COP0TLB(tlwr, Coprocessor0TLB, 006)
-COP0TLB(tlbp, Coprocessor0TLB, 010)
-COP0TLB(rfe,  Coprocessor0TLB, 020)
+COP0TLB(tlbr,  Coprocessor0TLB, 001)
+COP0TLB(tlbwi, Coprocessor0TLB, 002)
+COP0TLB(tlbwr, Coprocessor0TLB, 006)
+COP0TLB(tlbp,  Coprocessor0TLB, 010)
+COP0TLB(rfe,   Coprocessor0TLB, 020)
 #endif
 
